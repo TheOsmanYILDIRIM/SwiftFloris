@@ -15,6 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  ANDROID_PREVIEW_PLATFORM: "platforms;android-37.0"
   ANDROID_COMPILE_SDK: "37"
   ANDROID_BUILD_TOOLS: "37.0.0"
 
@@ -24,12 +25,12 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
@@ -41,7 +42,7 @@ jobs:
           git remote add upstream https://github.com/SysAdminDoc/SwiftFloris.git
           git fetch --no-tags upstream master
 
-      - name: Ensure Android SDK 37
+      - name: Ensure Android 17 preview SDK
         shell: bash
         run: |
           set -euo pipefail
@@ -53,8 +54,26 @@ jobs:
             echo "sdkmanager not found" >&2
             exit 1
           fi
+
+          # Android 17 / API 37 is still distributed through the preview
+          # repository and the platform package is named android-37.0.
           yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
-          "$SDKMANAGER" "platforms;android-${ANDROID_COMPILE_SDK}" "build-tools;${ANDROID_BUILD_TOOLS}"
+          "$SDKMANAGER" --channel=3             "$ANDROID_PREVIEW_PLATFORM"             "build-tools;$ANDROID_BUILD_TOOLS"
+
+          # AGP's integer compileSdk=37 resolves $ANDROID_HOME/platforms/android-37.
+          # Preview sdkmanager currently installs android-37.0, so expose the
+          # same SDK payload at the integer API path without copying it.
+          PREVIEW_DIR="$ANDROID_HOME/platforms/android-37.0"
+          COMPILE_DIR="$ANDROID_HOME/platforms/android-$ANDROID_COMPILE_SDK"
+          if [ ! -d "$PREVIEW_DIR" ]; then
+            echo "Android 17 preview platform was not installed at $PREVIEW_DIR" >&2
+            exit 1
+          fi
+          if [ ! -e "$COMPILE_DIR" ]; then
+            ln -s "$PREVIEW_DIR" "$COMPILE_DIR"
+          fi
+          test -f "$COMPILE_DIR/android.jar"
+          test -x "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2"
 
       - name: Verify thin Avenox overlay
         run: python3 scripts/check-avenox-overlay.py --upstream-ref upstream/master
@@ -62,10 +81,7 @@ jobs:
       - name: Test and build
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon \
-            :app:verifyNoInternetPermission \
-            :app:testDebugUnitTest \
-            :app:assembleDebug
+          ./gradlew --no-daemon             :app:verifyNoInternetPermission             :app:testDebugUnitTest             :app:assembleDebug
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4

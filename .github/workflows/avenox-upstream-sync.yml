@@ -13,6 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  ANDROID_PREVIEW_PLATFORM: "platforms;android-37.0"
   ANDROID_COMPILE_SDK: "37"
   ANDROID_BUILD_TOOLS: "37.0.0"
 
@@ -22,7 +23,7 @@ jobs:
     timeout-minutes: 50
     steps:
       - name: Checkout fork master
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: master
           fetch-depth: 0
@@ -56,7 +57,7 @@ jobs:
             {
               echo "## Upstream sync conflict"
               echo
-              echo "Upstream: \`${{ steps.upstream.outputs.sha }}\`"
+              echo "Upstream: `${{ steps.upstream.outputs.sha }}`"
               echo
               echo "Conflicting paths:"
               git diff --name-only --diff-filter=U | sed 's/^/- `/' | sed 's/$/`/'
@@ -67,13 +68,13 @@ jobs:
 
       - name: Set up JDK 21
         if: steps.upstream.outputs.changed == 'true'
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
           cache: gradle
 
-      - name: Ensure Android SDK 37
+      - name: Ensure Android 17 preview SDK
         if: steps.upstream.outputs.changed == 'true'
         shell: bash
         run: |
@@ -86,8 +87,21 @@ jobs:
             echo "sdkmanager not found" >&2
             exit 1
           fi
+
           yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
-          "$SDKMANAGER" "platforms;android-${ANDROID_COMPILE_SDK}" "build-tools;${ANDROID_BUILD_TOOLS}"
+          "$SDKMANAGER" --channel=3             "$ANDROID_PREVIEW_PLATFORM"             "build-tools;$ANDROID_BUILD_TOOLS"
+
+          PREVIEW_DIR="$ANDROID_HOME/platforms/android-37.0"
+          COMPILE_DIR="$ANDROID_HOME/platforms/android-$ANDROID_COMPILE_SDK"
+          if [ ! -d "$PREVIEW_DIR" ]; then
+            echo "Android 17 preview platform was not installed at $PREVIEW_DIR" >&2
+            exit 1
+          fi
+          if [ ! -e "$COMPILE_DIR" ]; then
+            ln -s "$PREVIEW_DIR" "$COMPILE_DIR"
+          fi
+          test -f "$COMPILE_DIR/android.jar"
+          test -x "$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS/aapt2"
 
       - name: Verify thin Avenox overlay
         if: steps.upstream.outputs.changed == 'true'
@@ -97,10 +111,7 @@ jobs:
         if: steps.upstream.outputs.changed == 'true'
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon \
-            :app:verifyNoInternetPermission \
-            :app:testDebugUnitTest \
-            :app:assembleDebug
+          ./gradlew --no-daemon             :app:verifyNoInternetPermission             :app:testDebugUnitTest             :app:assembleDebug
 
       - name: Push verified sync
         if: steps.upstream.outputs.changed == 'true'
