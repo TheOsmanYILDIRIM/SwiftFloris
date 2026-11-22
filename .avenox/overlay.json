@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "upstream": {
+    "repository": "SysAdminDoc/SwiftFloris",
+    "branch": "master"
+  },
+  "owned_prefixes": [
+    ".avenox/",
+    ".github/workflows/avenox-",
+    "app/src/main/kotlin/dev/patrickgold/florisboard/avenox/",
+    "app/src/test/kotlin/dev/patrickgold/florisboard/avenox/",
+    "app/src/main/res/values/avenox_",
+    "docs/AVENOX_"
+  ],
+  "owned_files": [
+    "AGENTS.md",
+    "scripts/check-avenox-overlay.py"
+  ],
+  "integration_points": []
+}

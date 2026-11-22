@@ -1,0 +1,120 @@
+name: Avenox Upstream Sync
+
+on:
+  schedule:
+    - cron: "23 */4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: avenox-upstream-sync
+  cancel-in-progress: false
+
+env:
+  ANDROID_COMPILE_SDK: "37"
+  ANDROID_BUILD_TOOLS: "37.0.0"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - name: Checkout fork master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Fetch upstream
+        id: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          git remote remove upstream 2>/dev/null || true
+          git remote add upstream https://github.com/SysAdminDoc/SwiftFloris.git
+          git fetch upstream master --tags
+          UPSTREAM_SHA="$(git rev-parse upstream/master)"
+          echo "sha=$UPSTREAM_SHA" >> "$GITHUB_OUTPUT"
+          if git merge-base --is-ancestor upstream/master HEAD; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Fork already contains upstream ${UPSTREAM_SHA:0:12}." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Merge upstream candidate
+        if: steps.upstream.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Avenox Upstream Bot"
+          git config user.email "avenox-upstream-bot@users.noreply.github.com"
+          SHORT_SHA="$(git rev-parse --short upstream/master)"
+          if ! git merge --no-ff upstream/master -m "chore(sync): SwiftFloris upstream ${SHORT_SHA} [skip ci]"; then
+            {
+              echo "## Upstream sync conflict"
+              echo
+              echo "Upstream: \`${{ steps.upstream.outputs.sha }}\`"
+              echo
+              echo "Conflicting paths:"
+              git diff --name-only --diff-filter=U | sed 's/^/- `/' | sed 's/$/`/'
+            } >> "$GITHUB_STEP_SUMMARY"
+            git merge --abort || true
+            exit 1
+          fi
+
+      - name: Set up JDK 21
+        if: steps.upstream.outputs.changed == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Ensure Android SDK 37
+        if: steps.upstream.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$(command -v sdkmanager || true)"
+          if [ -z "$SDKMANAGER" ]; then
+            SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          fi
+          if [ ! -x "$SDKMANAGER" ]; then
+            echo "sdkmanager not found" >&2
+            exit 1
+          fi
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" "platforms;android-${ANDROID_COMPILE_SDK}" "build-tools;${ANDROID_BUILD_TOOLS}"
+
+      - name: Verify thin Avenox overlay
+        if: steps.upstream.outputs.changed == 'true'
+        run: python3 scripts/check-avenox-overlay.py --upstream-ref upstream/master
+
+      - name: Test upstream candidate
+        if: steps.upstream.outputs.changed == 'true'
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon \
+            :app:verifyNoInternetPermission \
+            :app:testDebugUnitTest \
+            :app:assembleDebug
+
+      - name: Push verified sync
+        if: steps.upstream.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git push origin HEAD:master
+          echo "Verified upstream ${{ steps.upstream.outputs.sha }} merged into fork master." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload verified debug APK
+        if: steps.upstream.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: swiftfloris-avenox-upstream-${{ steps.upstream.outputs.sha }}
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
