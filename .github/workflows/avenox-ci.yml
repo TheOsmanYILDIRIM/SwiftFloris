@@ -78,6 +78,14 @@ jobs:
       - name: Verify thin Avenox overlay
         run: python3 scripts/check-avenox-overlay.py --upstream-ref upstream/master
 
+      - name: Raise Linux file watcher capacity
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo sysctl -w fs.inotify.max_user_instances=8192
+          sudo sysctl -w fs.inotify.max_user_watches=1048576
+          sudo sysctl -w fs.inotify.max_queued_events=65536
+
       - name: Test and build
         run: |
           chmod +x gradlew
